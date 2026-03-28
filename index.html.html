@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stream Race - Direct Connection</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        :root { --bg: #0d0d12; --accent: #00f2ff; --win: #00ff99; --panel: #1a1a24; }
+        body { margin: 0; background: var(--bg); color: white; font-family: 'Impact', sans-serif; display: flex; width: 1920px; height: 1080px; overflow: hidden; }
+        #game-container { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; }
+        canvas { background: #000; border: 5px solid #222; border-radius: 30px; }
+        #sidebar { width: 450px; background: var(--panel); border-left: 10px solid var(--accent); padding: 25px; display: flex; flex-direction: column; }
+        .timer-val { font-size: 120px; color: var(--accent); text-align: center; margin-bottom: 20px; }
+        .status-card { background: #000; padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 20px; font-family: sans-serif; font-size: 14px; }
+        .list-area { flex: 1; background: rgba(0,0,0,0.4); border-radius: 10px; padding: 15px; font-size: 24px; overflow-y: auto; border: 1px solid #222; }
+        #win-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 110px; text-align: center; text-shadow: 0 0 30px var(--win); display: none; z-index: 100; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="1300" height="1000"></canvas>
+    <div id="win-overlay">🏆 WINNER! 🏆<br><span id="wn" style="color: var(--win)"></span></div>
+</div>
+
+<div id="sidebar">
+    <div class="status-card">
+        <div style="color:var(--accent); font-weight:bold;">CONNECTION MODE: DIRECT</div>
+        <div id="status-text" style="color:#888;">Waiting for Chat Script...</div>
+    </div>
+
+    <div class="timer-val" id="countdown">60</div>
+
+    <div style="color: var(--accent); font-size: 20px; margin-bottom: 10px;">PLAYERS IN:</div>
+    <div id="qList" class="list-area"></div>
+    
+    <button onclick="startRound()" style="margin-top:10px; padding:15px; background:var(--accent); border:none; font-weight:bold; cursor:pointer;">FORCE START</button>
+</div>
+
+<script>
+const { Engine, World, Bodies, Body } = Matter;
+const engine = Engine.create();
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+engine.world.gravity.y = 1.4;
+
+let queue = [];
+let activeBalls = [];
+let ringParts = [];
+let isPlaying = false;
+let timer = 60;
+let ringAngle = 0;
+
+const npcs = ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Turbo", "Ghost", "Nova", "Viper", "Zeus", "Pixel", "Bullet", "Dagger", "Flint", "Hype", "Ion", "Jinx", "Lunar", "Moxie", "Nitro", "Orbit", "Phantom", "Radar", "Static", "Titan", "Bolt", "Rex", "Zero"];
+
+// Build Ring
+const radius = 460, thickness = 40, segments = 50, gap = 6;
+for (let i = 0; i < segments - gap; i++) {
+    const p = Bodies.rectangle(650, 500, (Math.PI * 2 * radius / segments) + 10, thickness, { isStatic: true, restitution: 1.2 });
+    ringParts.push(p);
+    World.add(engine.world, p);
+}
+
+// --- DIRECT CONNECTION RECEIVER ---
+window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "CHAT_JOIN") {
+        handleJoin(event.data.user);
+        document.getElementById('status-text').innerText = "Last Join: " + event.data.user;
+        document.getElementById('status-text').style.color = "#00ff99";
+    }
+});
+
+function handleJoin(name) {
+    if(!queue.includes(name) && !isPlaying) {
+        queue.push(name);
+        document.getElementById('qList').innerHTML = queue.map(n => `<div>👤 ${n}</div>`).join('');
+    }
+}
+
+function startRound() {
+    if (isPlaying) return;
+    isPlaying = true;
+    timer = 0;
+    const players = [...queue, ...npcs];
+    players.forEach((name, i) => {
+        const b = Bodies.circle(650 + (Math.random()*100-50), 400 + (Math.random()*100-50), 20, {
+            restitution: 1.1, friction: 0,
+            plugin: { name, color: `hsl(${(i * 137) % 360}, 80%, 60%)` }
+        });
+        activeBalls.push(b);
+        World.add(engine.world, b);
+    });
+}
+
+function loop() {
+    Engine.update(engine, 1000/60);
+    ringAngle += 0.025;
+    ringParts.forEach((p, i) => {
+        const a = (i / segments) * Math.PI * 2 + ringAngle;
+        Body.setPosition(p, { x: 650 + Math.cos(a) * radius, y: 500 + Math.sin(a) * radius });
+        Body.setAngle(p, a);
+    });
+
+    if (isPlaying) {
+        for (let i = activeBalls.length - 1; i >= 0; i--) {
+            const b = activeBalls[i];
+            const d = Math.hypot(b.position.x - 650, b.position.y - 500);
+            if (d > radius + 100) {
+                World.remove(engine.world, b);
+                activeBalls.splice(i, 1);
+            }
+        }
+        if (activeBalls.length === 1) {
+            const w = activeBalls[0].plugin.name;
+            isPlaying = false;
+            document.getElementById('wn').innerText = w;
+            document.getElementById('win-overlay').style.display = 'block';
+            setTimeout(() => {
+                document.getElementById('win-overlay').style.display = 'none';
+                activeBalls.forEach(b => World.remove(engine.world, b));
+                activeBalls = [];
+                queue = [];
+                document.getElementById('qList').innerHTML = "";
+                timer = 15; 
+            }, 8000);
+        }
+    }
+
+    ctx.clearRect(0, 0, 1300, 1000);
+    ctx.fillStyle = "#333";
+    ringParts.forEach(p => {
+        ctx.beginPath();
+        p.vertices.forEach(v => ctx.lineTo(v.x, v.y));
+        ctx.fill();
+    });
+
+    activeBalls.forEach(b => {
+        ctx.fillStyle = b.plugin.color;
+        ctx.beginPath(); ctx.arc(b.position.x, b.position.y, 20, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = "white"; ctx.font = "bold 20px Arial"; ctx.textAlign = "center";
+        ctx.fillText(b.plugin.name, b.position.x, b.position.y - 32);
+    });
+    requestAnimationFrame(loop);
+}
+
+setInterval(() => {
+    if (timer > 0 && !isPlaying) {
+        timer--;
+        document.getElementById('countdown').innerText = timer;
+        if (timer <= 0) startRound();
+    }
+}, 1000);
+
+loop();
+</script>
+</body>
+</html>
